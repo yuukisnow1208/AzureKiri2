@@ -1,0 +1,151 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+android {
+    // compileSdkVersion PROP_TARGET_SDK_VERSION
+    ndkVersion '25.2.9519653'
+    buildToolsVersion '33.0.2'
+    namespace 'com.yuri.kirikiri2'
+    compileSdkVersion PROP_COMPILE_SDK_VERSION.toInteger()
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+    buildFeatures {
+        compose true
+    }
+    composeOptions {
+        kotlinCompilerExtensionVersion '1.5.4'
+    }
+    packagingOptions {
+        jniLibs {
+            excludes += ['lib/*/libSDL2.so']
+        }
+    }
+
+    defaultConfig {
+        applicationId "com.azure.kiri2"
+        targetSdkVersion PROP_TARGET_SDK_VERSION
+        minSdkVersion PROP_MIN_SDK_VERSION
+
+        ndk {
+            abiFilters = []
+            abiFilters.addAll(PROP_APP_ABI.split(':').collect{it as String})
+        }
+
+        externalNativeBuild {
+            if (PROP_BUILD_TYPE == 'cmake') {
+                cmake {
+                    version '3.22.1'
+                    targets 'krkr2yuri'
+                    arguments "-DCMAKE_FIND_ROOT_PATH=", "-DANDROID_STL=c++_static", "-DANDROID_TOOLCHAIN=clang", "-DANDROID_ARM_NEON=TRUE",
+                              // native 用 -O0：-O1/-O2 都会触发 tjs2 的未定义行为，
+                              // 游戏启动保存数据（Dictionary.saveStruct）时 SIGSEGV；
+                              // 上游 Yuri 官方产物也是 native -O0（assembleDebug），行为一致
+                              "-DCMAKE_C_FLAGS_RELWITHDEBINFO=-O0 -DNDEBUG", "-DCMAKE_CXX_FLAGS_RELWITHDEBINFO=-O0 -DNDEBUG",
+                              "-DCMAKE_C_FLAGS_RELEASE=-O0 -DNDEBUG", "-DCMAKE_CXX_FLAGS_RELEASE=-O0 -DNDEBUG"
+                    cppFlags "-frtti -fexceptions -fsigned-char"
+                }
+            }
+        }
+        versionCode 1
+        versionName "1.0.0-beta"
+    }
+    signingConfigs {
+        release {
+            def signPropsFile = file('sign.properties')
+            def storeName = 'sign.jks' // 开发构建可经 sign.properties 指定为 sign-dev.jks
+            if (signPropsFile.exists()) {
+                Properties signProps = new Properties()
+                signProps.load(new FileInputStream(signPropsFile))
+                if (signProps['SIGN_STORE_FILE']) storeName = signProps['SIGN_STORE_FILE']
+                keyAlias signProps['SIGN_KEY_ALIAS']
+                keyPassword signProps['SIGN_KEY_PASS']
+                storePassword signProps['SIGN_STORE_PASS']
+            }
+            else {
+                // CI 等环境：可用 SIGN_STORE_FILE 指定密钥库（如 sign-dev.jks），默认 sign.jks
+                storeName = System.getenv("SIGN_STORE_FILE") ?: storeName
+                keyAlias System.getenv("SIGN_KEY_ALIAS")
+                keyPassword System.getenv("SIGN_KEY_PASS")
+                storePassword System.getenv("SIGN_STORE_PASS")
+            }
+            storeFile file(storeName)
+        }
+    }
+    buildTypes {
+        release {
+            debuggable false
+            renderscriptDebuggable false
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            signingConfig signingConfigs.release
+        }
+
+        debug {
+            debuggable true
+            jniDebuggable true
+            jniDebuggable true
+            renderscriptDebuggable true
+            signingConfig signingConfigs.release
+        }
+    }
+
+    sourceSets{
+        main{
+            manifest.srcFile "AndroidManifest.xml"
+            java.srcDirs = ["java"]
+            res.srcDirs = ["res"]
+            assets.srcDirs =["../../../assets"]
+        }
+
+    }
+
+    externalNativeBuild {
+        cmake {
+            version '3.22.1'
+            path "cpp/CMakeLists.txt"
+        }
+    }
+
+    android.applicationVariants.all { variant ->
+        variant.outputs.all {
+            outputFileName = "AzureKiri2_v${defaultConfig.versionName}.apk"
+        }
+    }
+}
+
+dependencies {
+    //implementation fileTree(dir: 'libs', include: ['*.jar'])
+    implementation project(':cocos2dx')
+
+    implementation "androidx.documentfile:documentfile:1.0.1"
+    implementation "androidx.activity:activity:1.8.2"
+    implementation "androidx.fragment:fragment:1.6.2"
+
+    // ---- Jetpack Compose + Material 3（原生 UI 层）----
+    def composeBom = platform('androidx.compose:compose-bom:2023.10.01')
+    implementation composeBom
+    androidTestImplementation composeBom
+
+    implementation "androidx.compose.ui:ui"
+    implementation "androidx.compose.ui:ui-graphics"
+    implementation "androidx.compose.ui:ui-tooling-preview"
+    implementation "androidx.compose.material3:material3"
+    implementation "androidx.compose.material:material-icons-extended"
+    implementation "androidx.activity:activity-compose:1.8.2"
+    implementation "androidx.lifecycle:lifecycle-runtime-compose:2.7.0"
+    implementation "androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0"
+    // 游戏内菜单浮层要在非 ComponentActivity 上手动挂 Compose，需要这几个 owner 类
+    implementation "androidx.lifecycle:lifecycle-runtime:2.7.0"
+    implementation "androidx.lifecycle:lifecycle-viewmodel:2.7.0"
+    implementation "androidx.savedstate:savedstate:1.2.1"
+    implementation "androidx.navigation:navigation-compose:2.7.7"
+    debugImplementation "androidx.compose.ui:ui-tooling"
+}

@@ -1,0 +1,113 @@
+name: build android
+on:
+  push: {tags:  ['v*']} #  Push events to matching v*, i.e. v1.0, v20.15.10
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  BUILD_NAME: azurekiri2_android
+
+jobs:
+  fetch_thirdparty_build:
+    runs-on: ubuntu-22.04
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: check thirdparty build
+      id: check_thirdparty_build
+      uses: actions/cache@v3
+      with: 
+        path: ./thirdparty/build
+        key: thirdparty_build
+    
+    - name: fetch thirdparty build
+      if: steps.check_thirdparty_build.outputs.cache-hit != 'true'
+      run: |
+        wget https://github.com/YuriSizuku/Kirikiroid2Yuri/releases/download/deps/thirdparty_build.tar.gz
+        tar xvzf thirdparty_build.tar.gz
+
+  fetch_thirdparty_port:
+    runs-on: ubuntu-22.04
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: check thirdparty port
+      id: check_thirdparty_port
+      uses: actions/cache@v3
+      with: 
+        path: ./thirdparty/port
+        key: thirdparty_port_v2
+    
+    - name: fetch thirdparty port
+      if: steps.check_thirdparty_port.outputs.cache-hit != 'true'
+      run: |
+        wget https://github.com/YuriSizuku/Kirikiroid2Yuri/releases/download/deps/thirdparty_port.tar.gz
+        tar xvzf thirdparty_port.tar.gz
+
+    - name: fetch AzureKiri2 cocos2d-x port (with local fixes)
+      run: |
+        rm -rf ./thirdparty/port/cocos2d-x
+        # 仓库已 vendor external/ 第三方依赖（v3-deps-158），克隆即自包含
+        git clone --depth 1 https://github.com/yuukisnow1208/port-cocos2d-x.git ./thirdparty/port/cocos2d-x
+
+  build_android:
+    runs-on: ubuntu-22.04
+    needs: 
+      - fetch_thirdparty_build
+      - fetch_thirdparty_port
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: get thirdparty build cache
+      uses: actions/cache@v3
+      with: 
+        key: thirdparty_build
+        path: ./thirdparty/build
+
+    - name: get thirdparty port cache
+      uses: actions/cache@v3
+      with:
+        key: thirdparty_port_v2
+        path: ./thirdparty/port
+
+    # cocos2d-x 始终新鲜克隆（仓库已 vendor external 依赖），不经过缓存，
+    # 避免缓存键不更新时用上旧内容
+    - name: fetch AzureKiri2 cocos2d-x port (with local fixes)
+      run: |
+        rm -rf ./thirdparty/port/cocos2d-x
+        git clone --depth 1 https://github.com/yuukisnow1208/port-cocos2d-x.git ./thirdparty/port/cocos2d-x
+
+    - uses: actions/setup-java@v3
+      with:
+        java-version:  |
+            8
+            11
+            17
+        distribution: 'temurin'
+        cache: gradle
+
+    - name: build krkr2yuri android
+      env:
+        SIGN_KEY_ALIAS: ${{ secrets.SIGN_KEY_ALIAS }}
+        SIGN_KEY_PASS: ${{ secrets.SIGN_KEY_PASS }}
+        SIGN_STORE_PASS: ${{ secrets.SIGN_STORE_PASS }}
+        SIGN_STORE_FILE: ${{ secrets.SIGN_STORE_FILE }}
+      run: |
+        wget https://github.com/YuriSizuku/Kirikiroid2Yuri/releases/download/1.3.9_yuri/Kirikiroid2_yuri_1.3.9.apk
+        7z x Kirikiroid2_yuri_1.3.9.apk assets
+        sudo mkdir /build_android && sudo chmod 777 /build_android 
+        cd project/android
+        chmod +x ./gradlew 
+        ./gradlew assembleDebug --no-daemon
+    
+    - name: create release
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: ncipollo/release-action@v1
+      with:
+        artifacts: "./build_android/outputs/apk/debug/*.apk"
+        allowUpdates: "true"
+        prerelease: "true"
+        token: ${{ secrets.GITHUB_TOKEN }}
