@@ -549,8 +549,73 @@ NCB_ATTACH_CLASS(WindowExCompat, Window)
 }
 
 //---------------------------------------------------------------------------
-// System クラスへのアタッチ（1.3.9 内蔵 windowEx が提供していた分）
+// System クラスへのアタッチ（1.3.9 内蔵 windowEx / krkrz 互換が提供していた分）
 //---------------------------------------------------------------------------
+
+/** 画面サイズを取得：Window.mainWindow の width/height（失敗時 1920x1080）。
+ *  krkrz の System.screenWidth 相当。このエンジンの System には
+ *  screenWidth/screenHeight が無いためここで供給する */
+static void GetGameScreenSize(tjs_int &w, tjs_int &h)
+{
+	w = 1920; h = 1080;
+	iTJSDispatch2 *global = TVPGetScriptDispatch();
+	if (!global) return;
+	tTJSVariant vcls;
+	if (TJS_FAILED(global->PropGet(0, TJS_W("Window"), NULL, &vcls, global))) {
+		global->Release();
+		return;
+	}
+	iTJSDispatch2 *cls = vcls.AsObjectNoAddRef();
+	tTJSVariant vwin;
+	if (TJS_SUCCEEDED(cls->PropGet(0, TJS_W("mainWindow"), NULL, &vwin, cls)) &&
+		vwin.Type() == tvtObject) {
+		iTJSDispatch2 *win = vwin.AsObjectNoAddRef();
+		tTJSVariant vw, vh;
+		if (TJS_SUCCEEDED(win->PropGet(0, TJS_W("width"), NULL, &vw, win)))  w = vw;
+		if (TJS_SUCCEEDED(win->PropGet(0, TJS_W("height"), NULL, &vh, win))) h = vh;
+	}
+	global->Release();
+}
+
+/** krkrz 形式のモニタ情報辞書：
+ *  %[ primary:bool, work:%[x,y,w,h(,left,top,right,bottom)], desktop:同様 ]。
+ *  Android は単一フルスクリーンモニタのみ */
+static tTJSVariant BuildMonitorDict()
+{
+	tjs_int w, h;
+	GetGameScreenSize(w, h);
+
+	iTJSDispatch2 *dict = TJSCreateDictionaryObject();
+	tTJSVariant vprim(true);
+	dict->PropSet(TJS_MEMBERENSURE, TJS_W("primary"), NULL, &vprim, dict);
+
+	struct RectSetter
+	{
+		static void apply(iTJSDispatch2 *d, const tjs_char *key, tjs_int x, tjs_int y, tjs_int w, tjs_int h)
+		{
+			iTJSDispatch2 *sub = TJSCreateDictionaryObject();
+			tTJSVariant vx(x), vy(y), vw(w), vh(h), vl(x), vt(y), vr(x + w), vb(y + h);
+			sub->PropSet(TJS_MEMBERENSURE, TJS_W("x"),     NULL, &vx, sub);
+			sub->PropSet(TJS_MEMBERENSURE, TJS_W("y"),     NULL, &vy, sub);
+			sub->PropSet(TJS_MEMBERENSURE, TJS_W("w"),     NULL, &vw, sub);
+			sub->PropSet(TJS_MEMBERENSURE, TJS_W("h"),     NULL, &vh, sub);
+			sub->PropSet(TJS_MEMBERENSURE, TJS_W("left"),   NULL, &vl, sub);
+			sub->PropSet(TJS_MEMBERENSURE, TJS_W("top"),    NULL, &vt, sub);
+			sub->PropSet(TJS_MEMBERENSURE, TJS_W("right"),  NULL, &vr, sub);
+			sub->PropSet(TJS_MEMBERENSURE, TJS_W("bottom"), NULL, &vb, sub);
+			tTJSVariant v(sub, sub);
+			d->PropSet(TJS_MEMBERENSURE, key, NULL, &v, d);
+			sub->Release();
+		}
+	};
+	RectSetter::apply(dict, TJS_W("work"),    0, 0, w, h);
+	RectSetter::apply(dict, TJS_W("desktop"), 0, 0, w, h);
+	RectSetter::apply(dict, TJS_W("monitor"), 0, 0, w, h);
+	tTJSVariant result(dict, dict);
+	dict->Release();
+	return result;
+}
+
 class SystemExCompat
 {
 public:
@@ -602,13 +667,94 @@ public:
 		if (result) *result = *param[0];
 		return TJS_S_OK;
 	}
+
+	/**
+	 * krkrz System.getMonitorInfo（windowEx が提供するデスクトップ情報）。
+	 * オーバーロード:
+	 *   (primary)              → プライマリモニタ情報
+	 *   (primary, window)      → ウィンドウのあるモニタ情報（常に見つかる）
+	 *   (primary, x, y, w, h)  → 矩形が掛かるモニタ情報、画面外なら void
+	 * WindowResizable.ks の isOnMonitor は 5 引数版で画面外判定に使う
+	 */
+	static tjs_error TJS_INTF_METHOD getMonitorInfo(
+		tTJSVariant *result, tjs_int numparams, tTJSVariant **param,
+		iTJSDispatch2 *objthis) {
+		if (numparams < 1) return TJS_E_BADPARAMCOUNT;
+		if (result) {
+			if (numparams >= 5) {
+				// 矩形が画面 (0,0,WxH) と交差するか
+				tjs_int sw, sh;
+				GetGameScreenSize(sw, sh);
+				tjs_int x = (tjs_int)*param[1], y = (tjs_int)*param[2];
+				tjs_int w = (tjs_int)*param[3], h = (tjs_int)*param[4];
+				if (x < sw && y < sh && x + w > 0 && y + h > 0) {
+					*result = BuildMonitorDict();
+				}
+				// 画面外 → void のまま
+			} else {
+				*result = BuildMonitorDict();
+			}
+		}
+		return TJS_S_OK;
+	}
+
+	/** krkrz System.getDisplayMonitors → モニタ情報辞書の配列（要素 1 個） */
+	static tjs_error TJS_INTF_METHOD getDisplayMonitors(
+		tTJSVariant *result, tjs_int numparams, tTJSVariant **param,
+		iTJSDispatch2 *objthis) {
+		if (result) {
+			iTJSDispatch2 *array = TJSCreateArrayObject();
+			tTJSVariant mon = BuildMonitorDict();
+			tTJSVariant *args[1] = { &mon };
+			static tjs_uint addHint = 0;
+			array->FuncCall(0, TJS_W("add"), &addHint, NULL, 1, args, array);
+			*result = tTJSVariant(array, array);
+			array->Release();
+		}
+		return TJS_S_OK;
+	}
+
+	/** System.screenWidth / screenHeight プロパティ getter */
+	static tjs_error TJS_INTF_METHOD getScreenWidth(
+		tTJSVariant *result, tjs_int numparams, tTJSVariant **param,
+		iTJSDispatch2 *objthis) {
+		if (result) {
+			tjs_int w, h;
+			GetGameScreenSize(w, h);
+			*result = w;
+		}
+		return TJS_S_OK;
+	}
+
+	static tjs_error TJS_INTF_METHOD getScreenHeight(
+		tTJSVariant *result, tjs_int numparams, tTJSVariant **param,
+		iTJSDispatch2 *objthis) {
+		if (result) {
+			tjs_int w, h;
+			GetGameScreenSize(w, h);
+			*result = h;
+		}
+		return TJS_S_OK;
+	}
+
+	/** OS の関連付け起動（URL/ファイルを開く）。Android では何もしない */
+	static tjs_error TJS_INTF_METHOD shellExecute(
+		tTJSVariant *result, tjs_int numparams, tTJSVariant **param,
+		iTJSDispatch2 *objthis) {
+		return TJS_S_OK;
+	}
 };
 
 NCB_ATTACH_CLASS(SystemExCompat, System)
 {
-	RawCallback(TJS_W("getCursorPos"),     &SystemExCompat::getCursorPos,     TJS_STATICMEMBER);
-	RawCallback(TJS_W("setCursorPos"),     &SystemExCompat::setCursorPos,     TJS_STATICMEMBER);
-	RawCallback(TJS_W("getSystemMetrics"), &SystemExCompat::getSystemMetrics, TJS_STATICMEMBER);
-	RawCallback(TJS_W("readEnvValue"),     &SystemExCompat::readEnvValue,     TJS_STATICMEMBER);
-	RawCallback(TJS_W("expandEnvString"),  &SystemExCompat::expandEnvString,  TJS_STATICMEMBER);
+	RawCallback(TJS_W("getCursorPos"),      &SystemExCompat::getCursorPos,      TJS_STATICMEMBER);
+	RawCallback(TJS_W("setCursorPos"),      &SystemExCompat::setCursorPos,      TJS_STATICMEMBER);
+	RawCallback(TJS_W("getSystemMetrics"),  &SystemExCompat::getSystemMetrics,  TJS_STATICMEMBER);
+	RawCallback(TJS_W("readEnvValue"),      &SystemExCompat::readEnvValue,      TJS_STATICMEMBER);
+	RawCallback(TJS_W("expandEnvString"),   &SystemExCompat::expandEnvString,   TJS_STATICMEMBER);
+	RawCallback(TJS_W("getMonitorInfo"),    &SystemExCompat::getMonitorInfo,    TJS_STATICMEMBER);
+	RawCallback(TJS_W("getDisplayMonitors"),&SystemExCompat::getDisplayMonitors,TJS_STATICMEMBER);
+	RawCallback(TJS_W("shellExecute"),      &SystemExCompat::shellExecute,      TJS_STATICMEMBER);
+	RawCallback(TJS_W("screenWidth"),  &SystemExCompat::getScreenWidth,  (int)0, TJS_STATICMEMBER);
+	RawCallback(TJS_W("screenHeight"), &SystemExCompat::getScreenHeight, (int)0, TJS_STATICMEMBER);
 }
