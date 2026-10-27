@@ -1,5 +1,4 @@
 # general
-assets/**
 build/**
 build_*/**
 thirdparty/build/**
