@@ -37,6 +37,12 @@ class LauncherActivity : ComponentActivity() {
     /** 存储访问状态（P5 分区存储适配），onResume 时重查以感知从系统设置返回 */
     private var storageGranted by mutableStateOf(true)
 
+    /** 游戏会话进行中：launchGame 置位，onResume 消费（外壳据此统一跳回游戏库页） */
+    private var returningFromGame = false
+
+    /** 递增触发 Compose 侧跳回游戏库（Kr2App 订阅该值） */
+    private var returnToLibraryTick by mutableStateOf(0)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         settings = SettingsStore(this)
@@ -47,6 +53,9 @@ class LauncherActivity : ComponentActivity() {
         val prefs = getSharedPreferences("kr2_native", MODE_PRIVATE)
         val firstLaunch = !prefs.getBoolean("help_shown", false)
         if (firstLaunch) prefs.edit().putBoolean("help_shown", true).apply()
+
+        // 游戏期间系统可能回收外壳进程，重建后也要知道刚才在玩游戏
+        returningFromGame = savedInstanceState?.getBoolean(KEY_RETURNING_GAME, false) ?: false
 
         storageGranted = checkStorageAccess()
 
@@ -64,7 +73,8 @@ class LauncherActivity : ComponentActivity() {
                     storageGranted = storageGranted,
                     onRequestStorage = ::requestStorageAccess,
                     onLaunch = ::launchGame,
-                    onXp3Repack = ::requestXp3Repack
+                    onXp3Repack = ::requestXp3Repack,
+                    returnToLibraryTick = returnToLibraryTick
                 )
             }
         }
@@ -76,6 +86,17 @@ class LauncherActivity : ComponentActivity() {
         settings.syncFromEngine()
         // 从系统「所有文件访问」设置页返回后重查授权状态
         storageGranted = checkStorageAccess()
+        // 退出游戏回到外壳：统一跳回游戏库页（否则后备栈恢复出的页面
+        // 会与重建后重置的地址栏标题失配）
+        if (returningFromGame) {
+            returningFromGame = false
+            returnToLibraryTick++
+        }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putBoolean(KEY_RETURNING_GAME, returningFromGame)
     }
 
     // ------------------------------------------------------------------
@@ -142,6 +163,7 @@ class LauncherActivity : ComponentActivity() {
             false
         }
         Log.d("KR2", "launch $path (hot=$hot)")
+        returningFromGame = true
         // CLEAR_TOP + SINGLE_TOP：已存在 MainActivity 时复用它（避免第二个引擎实例），
         // 否则新建。引擎起来后会消费待启动路径直接进入游戏。
         startActivity(
@@ -176,5 +198,6 @@ class LauncherActivity : ComponentActivity() {
 
     private companion object {
         const val RC_STORAGE = 100
+        const val KEY_RETURNING_GAME = "returning_from_game"
     }
 }

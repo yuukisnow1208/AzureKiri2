@@ -29,6 +29,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.material3.DrawerValue
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -37,10 +38,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.yuri.kirikiri2.data.LibraryStore
@@ -70,7 +73,8 @@ fun Kr2App(
     storageGranted: Boolean = true,
     onRequestStorage: () -> Unit = {},
     onLaunch: (File) -> Unit,
-    onXp3Repack: (File) -> Unit = {}
+    onXp3Repack: (File) -> Unit = {},
+    returnToLibraryTick: Int = 0
 ) {
     val context = LocalContext.current
     val navController: NavHostController = rememberNavController()
@@ -94,12 +98,34 @@ fun Kr2App(
             onLaunch(file)
         }
     }
-    var title by remember { mutableStateOf(if (startRoute == "help") "帮助" else "游戏库") }
+    // 标题从后备栈的当前路由派生，而不是独立状态：Activity 重建时 NavHost
+    // 的返回栈由 rememberSaveable 恢复，独立 title 会重置成默认值，出现
+    // 「地址栏显示 A、页面内容是 B」的失配（退出游戏回到外壳时出现过）
+    val backStackEntry by navController.currentBackStackEntryAsState()
+    val route = backStackEntry?.destination?.route
+    val title = when {
+        route == null -> if (startRoute == "help") "帮助" else "游戏库"
+        route.startsWith("gamesettings") ->
+            "${LibraryStore.displayName(context, backStackEntry?.arguments?.getString("path") ?: "")} · 独立设置"
+        route.startsWith("gallery") &&
+                !backStackEntry?.arguments?.getString("pick").isNullOrEmpty() -> "截图库 · 选封面"
+        else -> routeTitle(route) ?: if (startRoute == "help") "帮助" else "游戏库"
+    }
 
-    fun goto(route: String, label: String) {
-        title = label
+    fun goto(route: String) {
         navController.navigate(route) { launchSingleTop = true }
         scope.launch { drawerState.close() }
+    }
+
+    // 从游戏退出返回外壳：清空返回栈统一跳回游戏库页（LauncherActivity 在
+    // onResume 里递增 returnToLibraryTick 触发）
+    LaunchedEffect(returnToLibraryTick) {
+        if (returnToLibraryTick > 0) {
+            navController.navigate("launcher") {
+                popUpTo(navController.graph.findStartDestination().id) { inclusive = true }
+                launchSingleTop = true
+            }
+        }
     }
 
     ModalNavigationDrawer(
@@ -116,37 +142,37 @@ fun Kr2App(
                     label = { Text("游戏库") },
                     selected = false,
                     icon = { Icon(Icons.Default.VideogameAsset, null) },
-                    onClick = { goto("launcher", "游戏库") }
+                    onClick = { goto("launcher") }
                 )
                 NavigationDrawerItem(
                     label = { Text("截图库") },
                     selected = false,
                     icon = { Icon(Icons.Default.PhotoLibrary, null) },
-                    onClick = { goto("gallery", "截图库") }
+                    onClick = { goto("gallery") }
                 )
                 NavigationDrawerItem(
                     label = { Text("浏览文件") },
                     selected = false,
                     icon = { Icon(Icons.Default.Folder, null) },
-                    onClick = { goto("browser", "浏览文件") }
+                    onClick = { goto("browser") }
                 )
                 NavigationDrawerItem(
                     label = { Text("转换/解密XP3封包") },
                     selected = false,
                     icon = { Icon(Icons.Default.Build, null) },
-                    onClick = { goto("repack", "转换/解密XP3封包") }
+                    onClick = { goto("repack") }
                 )
                 NavigationDrawerItem(
                     label = { Text("设置") },
                     selected = false,
                     icon = { Icon(Icons.Default.Settings, null) },
-                    onClick = { goto("settings", "设置") }
+                    onClick = { goto("settings") }
                 )
                 NavigationDrawerItem(
                     label = { Text("帮助") },
                     selected = false,
                     icon = { Icon(Icons.Default.HelpOutline, null) },
-                    onClick = { goto("help", "帮助") }
+                    onClick = { goto("help") }
                 )
             }
         }
@@ -198,18 +224,16 @@ fun Kr2App(
                             }
                         },
                         onOpenSettings = { game: RecentGame ->
-                            title = "${game.name} · 独立设置"
                             navController.navigate("gamesettings?path=${Uri.encode(game.path)}") {
                                 launchSingleTop = true
                             }
                         },
                         onOpenGallery = { gamePath ->
-                            title = "截图库 · 选封面"
                             navController.navigate("gallery?pick=${Uri.encode(gamePath)}") {
                                 launchSingleTop = true
                             }
                         },
-                        onBrowse = { goto("browser", "浏览文件") }
+                        onBrowse = { goto("browser") }
                     )
                 }
                 composable(
@@ -313,6 +337,17 @@ fun Kr2App(
             }
         )
     }
+}
+
+/** 固定路由对应的地址栏标题；带参数的页面（gamesettings/gallery）单独处理 */
+private fun routeTitle(route: String): String? = when (route) {
+    "launcher" -> "游戏库"
+    "gallery" -> "截图库"
+    "browser" -> "浏览文件"
+    "repack" -> "转换/解密XP3封包"
+    "settings" -> "设置"
+    "help" -> "帮助"
+    else -> null
 }
 
 /** 供 Activity 复用：把主题与内容组合在一起 */
