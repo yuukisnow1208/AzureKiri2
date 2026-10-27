@@ -95,12 +95,14 @@ jobs:
         SIGN_KEY_PASS: ${{ secrets.SIGN_KEY_PASS }}
         SIGN_STORE_PASS: ${{ secrets.SIGN_STORE_PASS }}
         SIGN_STORE_FILE: ${{ secrets.SIGN_STORE_FILE }}
+      # 引擎运行时 assets 自 44de32e 起已入库（85 个文件），不再从 Yuri 上游
+      # APK 解包：7z 覆盖已有 assets/ 会因同名文件在非交互环境直接 fatal（exit 2），
+      # 这正是 v1.0.0/v1.0.1/v1.0.2 三次 tag 构建全挂的原因
       run: |
-        wget https://github.com/YuriSizuku/Kirikiroid2Yuri/releases/download/1.3.9_yuri/Kirikiroid2_yuri_1.3.9.apk
-        7z x Kirikiroid2_yuri_1.3.9.apk assets
-        sudo mkdir /build_android && sudo chmod 777 /build_android 
+        set -ex
+        sudo mkdir -p /build_android && sudo chmod 777 /build_android
         cd project/android
-        chmod +x ./gradlew 
+        chmod +x ./gradlew
         ./gradlew assembleDebug --no-daemon
     
     - name: create release
