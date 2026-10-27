@@ -174,12 +174,14 @@ fun Kr2App(
                         dataVersion = dataVersion,
                         onLaunch = { game ->
                             RecentStore.add(context, File(game.path))
+                            LibraryStore.restore(context, game.path)
                             recents = RecentStore.load(context)
                             dataVersion++
                             startGame(File(game.path))
                         },
                         onRemove = { game ->
                             RecentStore.remove(context, game.path)
+                            LibraryStore.remove(context, game.path)
                             recents = RecentStore.load(context)
                             dataVersion++
                             scope.launch {
@@ -189,6 +191,7 @@ fun Kr2App(
                                 )
                                 if (result == SnackbarResult.ActionPerformed) {
                                     RecentStore.add(context, File(game.path))
+                                    LibraryStore.restore(context, game.path)
                                     recents = RecentStore.load(context)
                                     dataVersion++
                                 }
@@ -230,6 +233,7 @@ fun Kr2App(
                 composable("browser") {
                     BrowserScreen(onLaunch = { file ->
                         RecentStore.add(context, file)
+                        LibraryStore.restore(context, file.absolutePath)
                         recents = RecentStore.load(context)
                         dataVersion++
                         startGame(file)

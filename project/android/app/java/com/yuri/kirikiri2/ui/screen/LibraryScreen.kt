@@ -130,8 +130,8 @@ fun LibraryScreen(
                     )
                 )
             }
-            // 有游玩记录但已从最近列表移除的游戏，也保留在库里
-            metas.values.filter { it.path !in seen && it.lastPlayed > 0 }.forEach { m ->
+            // 有游玩记录但已从最近列表移除的游戏，也保留在库里（已从库中移除的除外）
+            metas.values.filter { it.path !in seen && it.lastPlayed > 0 && !it.removed }.forEach { m ->
                 val f = java.io.File(m.path)
                 add(
                     LibraryEntry(

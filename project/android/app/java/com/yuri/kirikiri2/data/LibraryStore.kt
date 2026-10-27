@@ -18,6 +18,7 @@ data class GameMeta(
     val lastPlayed: Long = 0,
     val coverPath: String? = null,
     val name: String? = null, // 用户自定义名称；null = 用默认（游戏所在文件夹名）
+    val removed: Boolean = false, // 已从游戏库移除（软删除，撤销移除可恢复全部数据）
 )
 
 object LibraryStore {
@@ -40,6 +41,7 @@ object LibraryStore {
                 lastPlayed = o.optLong("last"),
                 coverPath = o.optString("cover").ifEmpty { null },
                 name = o.optString("name").ifEmpty { null },
+                removed = o.optBoolean("removed", false),
             )
         }.toMap()
     } catch (t: Throwable) {
@@ -57,6 +59,7 @@ object LibraryStore {
                         .put("last", m.lastPlayed)
                         .put("cover", m.coverPath ?: "")
                         .put("name", m.name ?: "")
+                        .put("removed", m.removed)
                 )
             }
             File(context.filesDir, FILE).writeText(JSONObject().put("games", gamesJson).toString())
@@ -90,6 +93,21 @@ object LibraryStore {
 
     fun setName(context: Context, path: String, name: String) {
         upsert(context, path) { it.copy(name = name.trim().ifEmpty { null }) }
+    }
+
+    // ---------------- 移除 / 恢复 ----------------
+
+    /**
+     * 从游戏库移除（软删除）：只打标记，游玩时长 / 自定义名 / 封面全部保留，
+     * 库列表与「有游玩记录兜底」均不再展示；撤销移除时可完整恢复。
+     */
+    fun remove(context: Context, path: String) {
+        upsert(context, path) { it.copy(removed = true) }
+    }
+
+    /** 撤销移除：恢复展示（重新添加同一游戏也会走这里清标记） */
+    fun restore(context: Context, path: String) {
+        upsert(context, path) { it.copy(removed = false) }
     }
 
     // ---------------- 封面 ----------------
