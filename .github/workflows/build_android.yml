@@ -111,5 +111,6 @@ jobs:
       with:
         artifacts: "./build_android/outputs/apk/debug/*.apk"
         allowUpdates: "true"
-        prerelease: "true"
+        # tag 名带 beta（如 v1.0.0-beta）才是预发布，其余为正式版
+        prerelease: ${{ contains(github.ref, 'beta') }}
         token: ${{ secrets.GITHUB_TOKEN }}
