@@ -111,6 +111,10 @@ jobs:
       with:
         artifacts: "./build_android/outputs/apk/debug/*.apk"
         allowUpdates: "true"
-        # tag 名带 beta（如 v1.0.0-beta）才是预发布，其余为正式版
+        # tag 名带 beta（如 v1.0.0-beta）才是预发布，其余为正式版。
+        # 注意：allowUpdates 更新已有 release 时默认省略 prerelease/draft 字段
+        # （omit*DuringUpdate 默认 true），必须显式关掉才会真正改掉标志
         prerelease: ${{ contains(github.ref, 'beta') }}
+        omitPrereleaseDuringUpdate: "false"
+        omitDraftDuringUpdate: "false"
         token: ${{ secrets.GITHUB_TOKEN }}
